@@ -58,7 +58,7 @@ headers = {
     'pragma': 'no-cache',
     'cache-control': 'no-cache',
     'upgrade-insecure-requests': '1',
-    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36',
+    'user-agent': 'Mozilla/5.0 (Linux; U; Android 2.2) AppleWebKit/533.1 (KHTML, like Gecko) Version/4.0 Mobile Safari/533.1',
     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
     'accept-language': 'en-US,en;q=0.9',
 }
@@ -66,8 +66,8 @@ headers = {
 
 async def get_product_specs(url: str) -> Dict:
 
-    async with aiohttp.ClientSession() as _session:
-        async with _session.get(url, headers=headers) as _response:
+    async with aiohttp.ClientSession(headers=headers) as _session:
+        async with _session.get(url) as _response:
 
             soup2 = BeautifulSoup(await _response.text(), 'html.parser')
             spec_body = soup2.findAll('div', class_='n54117_item_b_sub')
@@ -85,33 +85,48 @@ async def get_products(soup: BeautifulSoup):
         yield product
 
 
+async def get_pages_number(url: str) -> List[int]:
+
+    async with aiohttp.ClientSession(headers=headers) as _session:
+        async with _session.get(url) as _response:
+            soup = BeautifulSoup(await _response.text(), 'html.parser')
+            pagination = soup.find('ul', class_='pagination')
+            pagination = pagination.findAll('a')[0:-1]
+
+            return [x for x in range(0, int(pagination[len(pagination) - 1].text))]
+
+
 async def main():
     url = 'https://www.metalmarket.eu/en/menu/coins/1-ounce-coins-802.html?filter_traits%5B1%5D=367'
     default_value = 'null'
 
-    async with aiohttp.ClientSession() as _session:
-        async with _session.get(url, headers=headers) as _response:
+    async with aiohttp.ClientSession(headers=headers) as _session:
+        
+        for x in await get_pages_number(url):
+            url = f'https://www.metalmarket.eu/en/menu/coins/1-ounce-coins-802.html?filter_traits%5B1%5D=367&counter={x}'
 
-            soup = BeautifulSoup(await _response.text(), 'html.parser')
-            response_domain = f"https://{str(_response.url).split('/')[2]}"
+            async with _session.get(url) as _response:
 
-            async for product in get_products(soup):
-                product_name = product.find('a', class_='product-name')
+                soup = BeautifulSoup(await _response.text(), 'html.parser')
+                response_domain = f"https://{str(_response.url).split('/')[2]}"
 
-                product_detail = await get_product_specs(f"{response_domain}{product_name.attrs['href']}")
+                async for product in get_products(soup):
+                    product_name = product.find('a', class_='product-name')
 
-                product_params = {
-                    'name': product_name.text,
-                    'price': product.find('span', class_='price').text,
-                    'diameter': product_detail.get('Diameter', default_value),
-                    'weight': product_detail.get('Weight', default_value),
-                    'alloy': product_detail.get('Alloy', default_value),
-                    'denomination': product_detail.get('Denomination', default_value),
-                    'edge': product_detail.get('Edge', default_value),
-                    'producer': product_detail.get('Producer', default_value)
-                }
+                    product_detail = await get_product_specs(f"{response_domain}{product_name.attrs['href']}")
 
-                Product(ProductParams(**product_params))
+                    product_params = {
+                        'name': product_name.text,
+                        'price': ''.join([x for x in product.find('span', class_='price').text if x not in [' ', '\n']]),
+                        'diameter': product_detail.get('Diameter', default_value),
+                        'weight': product_detail.get('Weight', default_value),
+                        'alloy': product_detail.get('Alloy', default_value),
+                        'denomination': product_detail.get('Denomination', default_value),
+                        'edge': product_detail.get('Edge', default_value),
+                        'producer': product_detail.get('Producer', default_value)
+                    }
+
+                    Product(ProductParams(**product_params))
 
     await Product.save_to_csv()
 
